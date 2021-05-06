@@ -201,7 +201,9 @@ class GitHubRepositoryStatistics : JFrame("GitHub Repository Statistics"), Corou
     }
 
     private fun updateResults(results: Map<String, UserStatistics>) {
-        resultsModel.setDataVector(results.map { (login, stat) ->
+
+        val sortedResults = results.toList().sortedBy { -it.second.commits }.toMap()
+        resultsModel.setDataVector(sortedResults.map { (login, stat) ->
             arrayOf(login, stat.commits, stat.files.size, stat.changes)
         }.toTypedArray(), columns)
     }
@@ -351,7 +353,6 @@ suspend fun loadResults(
         channel.close()
     }
     for ((name, data) in channel) {
-        println(name)
         val oldValue = res[name] ?: UserStatistics(0, mutableSetOf(), 0)
         oldValue.commits += data.commits
         oldValue.changes += data.changes
