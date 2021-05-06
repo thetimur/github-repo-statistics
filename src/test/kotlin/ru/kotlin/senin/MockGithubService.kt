@@ -13,7 +13,11 @@ object MockGithubService : GitHubService {
         perPage: Int
     ): Response<List<Commit>> {
         delay(commitsRequestDelay)
-        return Response.success(commits)
+        return if (page == 1) {
+            Response.success(commits)
+        } else {
+            Response.success(emptyList())
+        }
     }
 
     override suspend fun getChanges(

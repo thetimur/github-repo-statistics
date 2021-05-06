@@ -86,5 +86,6 @@ val progressResults = listOf(
             user2Info.login to UserStatistics(1, sortedSetOf(file3), 5)
         )
     ),
+    expectedFinalResults,
     expectedFinalResults
 )

@@ -1,6 +1,7 @@
 package ru.kotlin.senin
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.kotlin.senin.GitHubRepositoryStatistics.LoadingStatus.*
@@ -11,20 +12,25 @@ import java.awt.Insets
 import java.awt.event.ActionListener
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.lang.String.join
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.Executors
 import java.util.prefs.Preferences
 import javax.swing.*
 import javax.swing.table.DefaultTableModel
 import kotlin.coroutines.CoroutineContext
 import kotlin.system.exitProcess
 
+
 val log: Logger = LoggerFactory.getLogger("AppUI")
 private val defaultInsets = Insets(3, 10, 3, 10)
 
 
 data class UserStatistics(
-    val commits: Int,
-    val files: Set<String>,
-    val changes: Int
+    var commits: Int,
+    var files: MutableSet<String>,
+    var changes: Int
 )
 
 fun main() {
@@ -87,7 +93,9 @@ class GitHubRepositoryStatistics : JFrame("GitHub Repository Statistics"), Corou
         }.setUpCancellation()
     }
 
-    private fun parseRepositoryUrl(repositoryUrl: String): Pair<String, String> = TODO("Implement me!")
+    private fun parseRepositoryUrl(repositoryUrl: String): Pair<String, String> =
+        Pair(repositoryUrl.substringBeforeLast('/').substringAfterLast('/'),
+                repositoryUrl.substringAfterLast('/'))
 
     private fun clearResults() {
         updateResults(emptyMap())
@@ -120,7 +128,23 @@ class GitHubRepositoryStatistics : JFrame("GitHub Repository Statistics"), Corou
 
     private fun Job.setUpCancellation() {
         // TODO: make active the 'cancel' button
+        setActionsStatus(newLoadingEnabled = false, cancellationEnabled = true)
+
         // TODO: cancel the loading job if the 'cancel' button was clicked
+        addCancelListener {
+            clearResults()
+            updateLoadingStatus(CANCELED)
+            setActionsStatus(newLoadingEnabled = true, cancellationEnabled = false)
+            this.cancel()
+        }
+
+        this.invokeOnCompletion {
+            removeCancelListener {
+                updateLoadingStatus(COMPLETED)
+                setActionsStatus(newLoadingEnabled = true, cancellationEnabled = false)
+            }
+        }
+
         // TODO: update the status and remove the listener after the loading job is completed
     }
 
@@ -177,7 +201,6 @@ class GitHubRepositoryStatistics : JFrame("GitHub Repository Statistics"), Corou
     }
 
     private fun updateResults(results: Map<String, UserStatistics>) {
-        // TODO: Sort results by number of commits!
         resultsModel.setDataVector(results.map { (login, stat) ->
             arrayOf(login, stat.commits, stat.files.size, stat.changes)
         }.toTypedArray(), columns)
@@ -293,6 +316,53 @@ fun saveParameters(storedParameters: StoredParameters) {
 suspend fun loadResults(
     service: GitHubService, req: RequestData,
     updateResults: suspend (Map<String, UserStatistics>, completed: Boolean) -> Unit): Unit = coroutineScope {
-    TODO("Implement me!")
+
+
+    val res = mutableMapOf<String, UserStatistics>()
+    val jobList = mutableListOf<Job>()
+    val channel = Channel<Pair<String, UserStatistics> >()
+
+    for (page in 1..100) {
+        jobList.add(launch {
+            val commits = service.getCommits(req.owner, req.repository, since = null, page = page).body()
+
+            commits?.forEach { commit ->
+
+                if (commit.author != null && commit.author.type != "Bot") {
+                    val current = UserStatistics(1, mutableSetOf(), 0)
+
+                    val data = service.getChanges(req.owner, req.repository, commit.sha).body()
+
+                    if (data != null) {
+                        current.files.addAll(data.files.map { it.filename })
+                        current.changes += data.files.sumBy { it.changes }
+                    }
+
+                    channel.send(Pair(commit.author.login, current))
+                }
+
+            }
+        })
+    }
+    launch {
+        for (job in jobList) {
+            job.join()
+        }
+        channel.close()
+    }
+    for ((name, data) in channel) {
+        println(name)
+        val oldValue = res[name] ?: UserStatistics(0, mutableSetOf(), 0)
+        oldValue.commits += data.commits
+        oldValue.changes += data.changes
+        oldValue.files.addAll(data.files)
+        res[name] = oldValue
+        updateResults(res, false)
+    }
+    updateResults(res, true)
+}
+
+private fun String.parseDate(): LocalDateTime {
+    return LocalDateTime.parse(this.substring(0..this.length - 2))
 }
 
