@@ -12,10 +12,8 @@ import java.awt.Insets
 import java.awt.event.ActionListener
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
-import java.lang.String.join
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.Executors
 import java.util.prefs.Preferences
 import javax.swing.*
 import javax.swing.table.DefaultTableModel
@@ -54,7 +52,7 @@ class GitHubRepositoryStatistics : JFrame("GitHub Repository Statistics"), Corou
     private val job = Job()
 
     override val coroutineContext: CoroutineContext
-        get() = job + Dispatchers.Main
+        get() = job + Dispatchers.Default
 
     private fun init() {
         // Start a new loading on 'load' click
@@ -138,14 +136,14 @@ class GitHubRepositoryStatistics : JFrame("GitHub Repository Statistics"), Corou
             this.cancel()
         }
 
+        // TODO: update the status and remove the listener after the loading job is completed
+
         this.invokeOnCompletion {
             removeCancelListener {
                 updateLoadingStatus(COMPLETED)
                 setActionsStatus(newLoadingEnabled = true, cancellationEnabled = false)
             }
         }
-
-        // TODO: update the status and remove the listener after the loading job is completed
     }
 
     private fun loadInitialParameters() {
@@ -323,24 +321,27 @@ suspend fun loadResults(
     val res = mutableMapOf<String, UserStatistics>()
     val jobList = mutableListOf<Job>()
     val channel = Channel<Pair<String, UserStatistics> >()
+    val sinceDate = LocalDateTime.now().minusYears(1)
 
     for (page in 1..100) {
         jobList.add(launch {
-            val commits = service.getCommits(req.owner, req.repository, since = null, page = page).body()
+            val commits = service.getCommits(req.owner, req.repository, since = sinceDate.format(DateTimeFormatter.ISO_DATE), page = page).body()
 
             commits?.forEach { commit ->
 
                 if (commit.author != null && commit.author.type != "Bot") {
-                    val current = UserStatistics(1, mutableSetOf(), 0)
+                    launch {
+                        val current = UserStatistics(1, mutableSetOf(), 0)
 
-                    val data = service.getChanges(req.owner, req.repository, commit.sha).body()
+                        val data = service.getChanges(req.owner, req.repository, commit.sha).body()
 
-                    if (data != null) {
-                        current.files.addAll(data.files.map { it.filename })
-                        current.changes += data.files.sumBy { it.changes }
+                        if (data != null) {
+                            current.files.addAll(data.files.map { it.filename })
+                            current.changes += data.files.sumBy { it.changes }
+                        }
+
+                        channel.send(Pair(commit.author.login, current))
                     }
-
-                    channel.send(Pair(commit.author.login, current))
                 }
 
             }
@@ -363,7 +364,4 @@ suspend fun loadResults(
     updateResults(res, true)
 }
 
-private fun String.parseDate(): LocalDateTime {
-    return LocalDateTime.parse(this.substring(0..this.length - 2))
-}
 
