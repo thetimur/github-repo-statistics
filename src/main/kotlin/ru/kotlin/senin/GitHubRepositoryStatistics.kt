@@ -323,14 +323,14 @@ suspend fun loadResults(
     val channel = Channel<Pair<String, UserStatistics> >()
     val sinceDate = LocalDateTime.now().minusYears(1)
     var isPageEmpty = false
-    var page = 0
+    var page = 1
 
 
 
     while (!isPageEmpty) {
         println(page)
         val commits = service.getCommits(req.owner, req.repository, since = sinceDate.format(DateTimeFormatter.ISO_DATE), page = page).body()
-        if (commits == null || commits.isEmpty()) {
+        if (commits == null || commits.isEmpty() || commits.size < 100) {
             isPageEmpty = true
         }
 
