@@ -322,13 +322,20 @@ suspend fun loadResults(
     val jobList = mutableListOf<Job>()
     val channel = Channel<Pair<String, UserStatistics> >()
     val sinceDate = LocalDateTime.now().minusYears(1)
+    var isPageEmpty = false
+    var page = 0
 
-    for (page in 1..100) {
+
+
+    while (!isPageEmpty) {
+        println(page)
+        val commits = service.getCommits(req.owner, req.repository, since = sinceDate.format(DateTimeFormatter.ISO_DATE), page = page).body()
+        if (commits == null || commits.isEmpty()) {
+            isPageEmpty = true
+        }
+
         jobList.add(launch {
-            val commits = service.getCommits(req.owner, req.repository, since = sinceDate.format(DateTimeFormatter.ISO_DATE), page = page).body()
-
             commits?.forEach { commit ->
-
                 if (commit.author != null && commit.author.type != "Bot") {
                     launch {
                         val current = UserStatistics(1, mutableSetOf(), 0)
@@ -343,16 +350,18 @@ suspend fun loadResults(
                         channel.send(Pair(commit.author.login, current))
                     }
                 }
-
             }
         })
+        page++
     }
+
     launch {
         for (job in jobList) {
             job.join()
         }
         channel.close()
     }
+
     for ((name, data) in channel) {
         val oldValue = res[name] ?: UserStatistics(0, mutableSetOf(), 0)
         oldValue.commits += data.commits
@@ -361,6 +370,8 @@ suspend fun loadResults(
         res[name] = oldValue
         updateResults(res, false)
     }
+
+
     updateResults(res, true)
 }
 
